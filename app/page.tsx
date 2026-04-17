@@ -55,10 +55,10 @@ export default function LandingPage() {
                 <Navigation size={24} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
               </Link>
               <Link
-                href="/auth/signup"
+                href="/search"
                 className="group px-10 py-5 bg-white text-dark border-4 border-dark rounded-[2rem] font-black text-xl flex items-center justify-center hover:bg-light transition-all shadow-card"
               >
-                Get Started
+                Start Searching
                 <ChevronRight size={24} className="group-hover:translate-x-1 transition-transform" />
               </Link>
             </div>
@@ -100,34 +100,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Quick Actions / Role Selection */}
-      <section className="py-24 max-w-7xl mx-auto px-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Student Card */}
-          <div className="group bg-white p-12 rounded-[4rem] shadow-card hover:shadow-elevated transition-all border-4 border-transparent hover:border-primary/10">
-            <div className="w-20 h-20 bg-primary/10 text-primary rounded-[2rem] flex items-center justify-center mb-8 group-hover:scale-110 transition-transform shadow-inner text-primary">
-              <Users size={40} strokeWidth={2.5} />
-            </div>
-            <h3 className="text-3xl font-black text-dark mb-4">For Students</h3>
-            <p className="text-dark-light font-medium mb-8 leading-relaxed">Search through thousands of verified rooms, virtual tours, and student reviews.</p>
-            <Link href="/search" className="inline-flex items-center gap-2 font-black text-primary uppercase tracking-widest text-sm hover:gap-4 transition-all">
-              Browse Listings <ArrowRight size={20} />
-            </Link>
-          </div>
-
-          {/* Warden Card */}
-          <div className="group bg-white p-12 rounded-[4rem] shadow-card hover:shadow-elevated transition-all border-4 border-transparent hover:border-secondary/10">
-            <div className="w-20 h-20 bg-secondary/10 text-secondary rounded-[2rem] flex items-center justify-center mb-8 group-hover:scale-110 transition-transform shadow-inner text-secondary">
-              <Building2 size={40} strokeWidth={2.5} />
-            </div>
-            <h3 className="text-3xl font-black text-dark mb-4">For Wardens</h3>
-            <p className="text-dark-light font-medium mb-8 leading-relaxed">Manage your hostel blocks, track occupancy, and automate student approvals with ease.</p>
-            <Link href="/auth/signup?role=Warden" className="inline-flex items-center gap-2 font-black text-secondary uppercase tracking-widest text-sm hover:gap-4 transition-all">
-              Host a Block <ArrowRight size={20} />
-            </Link>
-          </div>
-        </div>
-      </section>
+      {/* Section Removed: Quick Actions / Role Selection */}
 
       {/* How It Works */}
       <section className="py-24 px-6 bg-white">
