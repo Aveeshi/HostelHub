@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS students (
     room_number TEXT,
     enrollment_status TEXT DEFAULT 'Prospective',
     photo TEXT,
+    sleep_habit TEXT,
+    drinks_smokes BOOLEAN,
+    college TEXT,
+    intro TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );

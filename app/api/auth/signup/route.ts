@@ -43,7 +43,6 @@ export async function POST(request: NextRequest) {
             const existingStudent = studentRes.rows[0];
 
             await client.query('COMMIT');
-            client.release();
 
             const userForToken = {
                 _id: existingUser.id,

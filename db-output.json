@@ -1,0 +1,66 @@
+{
+  "users": [
+    {
+      "id": "0b20ab09-a54f-4e83-a22a-0afa034d4f69",
+      "email": "radheradhe@gmail.com",
+      "password": "$2b$10$14KoVyvC/HvtqleryeOvnu.X.WeCSV6bngzhfubEYw1pVMtc6UOCK",
+      "role": "Student",
+      "name": "heee haa",
+      "phone": "2543434342",
+      "can_access_dashboard": false,
+      "is_active": true,
+      "created_at": "2026-03-19T15:56:17.707Z",
+      "updated_at": "2026-03-19T15:56:17.707Z"
+    },
+    {
+      "id": "391aa065-5a0d-422d-9238-2c1d3e09c7f2",
+      "email": "hi@gmail.com",
+      "password": "$2b$10$Eui5RjPLc0NrYpGpi2/QSe3r1qemOTV1UwLlkJHRO/kQAhkRzsSW2",
+      "role": "Student",
+      "name": "hiiiii",
+      "phone": "2546865463",
+      "can_access_dashboard": false,
+      "is_active": true,
+      "created_at": "2026-03-19T15:04:21.948Z",
+      "updated_at": "2026-03-19T15:04:21.948Z"
+    }
+  ],
+  "students": [
+    {
+      "id": "7f29ef19-50c6-42b0-ab74-7885a2fc16d8",
+      "user_id": "0b20ab09-a54f-4e83-a22a-0afa034d4f69",
+      "roll_number": "TEMP-1773935777858",
+      "course": "Basic",
+      "year": 1,
+      "department": "General",
+      "hostel_block_id": null,
+      "room_number": null,
+      "enrollment_status": "Prospective",
+      "photo": null,
+      "sleep_habit": null,
+      "drinks_smokes": null,
+      "college": null,
+      "intro": null,
+      "created_at": "2026-03-19T15:56:17.707Z",
+      "updated_at": "2026-03-19T15:56:17.707Z"
+    },
+    {
+      "id": "b5451689-80a4-4a75-af4a-7477fdc78806",
+      "user_id": "391aa065-5a0d-422d-9238-2c1d3e09c7f2",
+      "roll_number": "TEMP-1773932662022",
+      "course": "Basic",
+      "year": 1,
+      "department": "General",
+      "hostel_block_id": null,
+      "room_number": null,
+      "enrollment_status": "Prospective",
+      "photo": null,
+      "sleep_habit": null,
+      "drinks_smokes": null,
+      "college": null,
+      "intro": null,
+      "created_at": "2026-03-19T15:04:21.948Z",
+      "updated_at": "2026-03-19T15:04:21.948Z"
+    }
+  ]
+}

@@ -64,7 +64,7 @@ function SignupForm() {
             } else if (data.user.role === 'Warden') {
                 router.replace('/warden');
             } else {
-                router.replace('/search');
+                router.replace('/onboarding');
             }
             router.refresh();
         } catch (err: unknown) {

@@ -27,6 +27,13 @@ export function getAuthToken(): string | null {
     return localStorage.getItem('token');
 }
 
+export function getAuthSession(): { token: string | null; user: StoredUser | null } {
+    return {
+        token: getAuthToken(),
+        user: getStoredUser()
+    };
+}
+
 export function setAuthSession(token: string, user: StoredUser) {
     if (typeof window === 'undefined') return;
 
