@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
 
 export async function GET(request: NextRequest) {
     try {
@@ -8,53 +9,44 @@ export async function GET(request: NextRequest) {
         const year = searchParams.get('year');
         const blockId = searchParams.get('blockId');
 
-        let query = `
-            SELECT s.*, u.name, u.email, u.phone, hb.block_name
-            FROM students s
-            JOIN users u ON s.user_id = u.id
-            LEFT JOIN hostel_blocks hb ON s.hostel_block_id = hb.id
-            WHERE 1=1
-        `;
-        const params: any[] = [];
-        let paramIndex = 1;
+        const studentsRef = collection(db, 'students');
+        let queryConstraints = [];
 
         if (course) {
-            query += ` AND s.course = $${paramIndex}`;
-            params.push(course);
-            paramIndex++;
+            queryConstraints.push(where('course', '==', course));
         }
         if (year) {
-            query += ` AND s.year = $${paramIndex}`;
-            params.push(parseInt(year));
-            paramIndex++;
+            queryConstraints.push(where('year', '==', parseInt(year)));
         }
         if (blockId) {
-            query += ` AND s.hostel_block_id = $${paramIndex}`;
-            params.push(blockId);
-            paramIndex++;
+            queryConstraints.push(where('hostelBlockId', '==', blockId));
         }
 
-        query += ' ORDER BY s.created_at DESC';
+        const q = query(studentsRef, ...queryConstraints);
+        const snapshot = await getDocs(q);
 
-        const res = await pool.query(query, params);
-
-        const students = res.rows.map(row => ({
-            _id: row.id,
-            userId: row.user_id,
-            rollNumber: row.roll_number,
-            course: row.course,
-            year: row.year,
-            department: row.department,
-            hostelBlockId: row.hostel_block_id ? {
-                _id: row.hostel_block_id,
-                blockName: row.block_name
-            } : null,
-            roomNumber: row.room_number,
-            enrollmentStatus: row.enrollment_status,
-            name: row.name,
-            email: row.email,
-            phone: row.phone
-        }));
+        let students: any[] = [];
+        snapshot.forEach((doc: any) => {
+            const data = doc.data();
+            students.push({
+                _id: doc.id,
+                userId: data.userId,
+                rollNumber: data.rollNumber,
+                course: data.course,
+                year: data.year,
+                department: data.department,
+                // Fallback since SQL joins are removed
+                hostelBlockId: data.hostelBlockId ? {
+                    _id: data.hostelBlockId,
+                    blockName: data.blockName || 'Assigned Block' 
+                } : null,
+                roomNumber: data.roomNumber,
+                enrollmentStatus: data.enrollmentStatus,
+                name: data.name,
+                email: data.email,
+                phone: data.phone
+            });
+        });
 
         return NextResponse.json(students);
     } catch (error: any) {
@@ -69,16 +61,27 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { userId, rollNumber, course, year, department, hostelBlockId, roomNumber } = body;
+        const { userId, rollNumber, course, year, department, hostelBlockId, roomNumber, name, email, phone } = body;
 
-        const res = await pool.query(
-            `INSERT INTO students (user_id, roll_number, course, year, department, hostel_block_id, room_number)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING *`,
-            [userId, rollNumber, course, year, department, hostelBlockId, roomNumber]
-        );
+        const studentsRef = collection(db, 'students');
+        const newStudent = {
+            userId,
+            rollNumber,
+            course,
+            year,
+            department,
+            hostelBlockId,
+            roomNumber,
+            name: name || '',
+            email: email || '',
+            phone: phone || '',
+            enrollmentStatus: 'Active',
+            created_at: new Date().toISOString()
+        };
 
-        return NextResponse.json({ ...res.rows[0], _id: res.rows[0].id }, { status: 201 });
+        const docRef = await addDoc(studentsRef, newStudent);
+
+        return NextResponse.json({ ...newStudent, _id: docRef.id, id: docRef.id }, { status: 201 });
     } catch (error: any) {
         console.error('Error creating student:', error);
         return NextResponse.json(

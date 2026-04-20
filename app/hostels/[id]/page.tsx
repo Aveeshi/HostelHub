@@ -102,63 +102,6 @@ export default function HostelDetailsPage() {
     };
 
     const confirmApplication = async () => {
-        setShowConfirmModal(false);
-        setApplying(true);
-        const token = localStorage.getItem('token');
-
-        try {
-            // ... (rest of the apply logic)
-            const authRes = await fetch('/api/auth/me', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            if (!authRes.ok) {
-                router.push(`/auth/login?returnUrl=/hostels/${id}`);
-                return;
-            }
-
-            const authData = await authRes.json();
-
-            if (authData.user.role !== 'Student') {
-                alert('Only students can apply for hostels.');
-                setApplying(false);
-                return;
-            }
-
-            const studentId = typeof authData.student === 'string' ? authData.student : authData.student.id;
-
-            const res = await fetch('/api/applications/apply', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    studentId: studentId,
-                    hostelBlockId: id,
-                    applicationData: {
-                        preferredRoomType: 'Double Share',
-                        moveInDate: new Date()
-                    }
-                })
-            });
-
-            if (res.ok) {
-                alert('Applied! Visit hostel in 12hrs to confirm admission.');
-                router.push('/dashboard');
-            } else {
-                const err = await res.json();
-                alert(err.error || 'Failed to submit application.');
-            }
-        } catch (error) {
-            alert('Failed to submit application. Please try again.');
-            console.error(error);
-        } finally {
-            setApplying(false);
-        }
-    };
-
-    if (loading) {
         return (
             <div className="min-h-screen bg-white flex items-center justify-center">
                 <Loader2 className="w-12 h-12 text-primary animate-spin" />
@@ -291,55 +234,24 @@ export default function HostelDetailsPage() {
                             })}
                         </div>
                     </section>
-
-                    {/* Occupancy Map Section */}
-                    <section className="space-y-10">
-                        <div className="flex items-center justify-between">
-                            <h2 className="text-4xl font-black text-dark tracking-tight flex items-center gap-4">
-                                <div className="w-12 h-12 bg-accent/10 text-accent rounded-2xl flex items-center justify-center">
-                                    <LayoutDashboard size={24} />
-                                </div>
-                                Room Occupancy Map
-                            </h2>
-                            <div className="flex gap-4">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 bg-success rounded-full" />
-                                    <span className="text-[10px] font-black uppercase text-dark-light">Free</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 bg-accent rounded-full" />
-                                    <span className="text-[10px] font-black uppercase text-dark-light">Booked</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 bg-danger rounded-full" />
-                                    <span className="text-[10px] font-black uppercase text-dark-light">Occupied</span>
-                                </div>
+                    {/* Photo Gallery */}
+                    {hostelImages.length > 1 && (
+                        <section className="space-y-10">
+                            <h2 className="text-4xl font-black text-dark tracking-tight">Image Gallery</h2>
+                            <div className="flex overflow-x-auto gap-4 pb-4 snap-x" style={{ display: "flex", overflowX: "scroll" }}>
+                                {hostelImages.map((img: string, i: number) => (
+                                    <img 
+                                        key={i} 
+                                        src={img} 
+                                        alt={`Gallery ${i}`} 
+                                        className="h-48 w-auto md:h-64 object-cover rounded-[2rem] snap-center hover:scale-[1.02] active:scale-95 transition-transform cursor-pointer border-4 border-transparent hover:border-white shadow-sm flex-none"
+                                        style={{ minWidth: "250px" }}
+                                        onClick={() => setActiveImage(i)}
+                                    />
+                                ))}
                             </div>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
-                            {[
-                                { nr: 'A-101', status: 'Free' },
-                                { nr: 'A-102', status: 'Occupied' },
-                                { nr: 'A-103', status: 'Booked' },
-                                { nr: 'A-104', status: 'Free' }
-                            ].map((room, idx) => (
-                                <div key={idx} className={`p-8 rounded-[2.5rem] border-2 flex flex-col items-center justify-center transition-all hover:scale-105 ${room.status === 'Free' ? 'bg-success/5 border-success/20 text-success' :
-                                    room.status === 'Booked' ? 'bg-accent/5 border-accent/20 text-accent' :
-                                        'bg-danger/5 border-danger/20 text-danger'
-                                    } shadow-sm hover:shadow-md`}>
-                                    <div className="text-xs font-black uppercase tracking-widest mb-1 opacity-60">Room</div>
-                                    <div className="text-3xl font-black tracking-tight mb-4">{room.nr}</div>
-                                    <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${room.status === 'Free' ? 'border-success/20 bg-success/10' :
-                                        room.status === 'Booked' ? 'border-accent/20 bg-accent/10' :
-                                            'border-danger/20 bg-danger/10'
-                                        }`}>
-                                        {room.status}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </section>
-
+                        </section>
+                    )}
                     {/* Location Section */}
                     <section className="space-y-10">
                         <h2 className="text-4xl font-black text-dark tracking-tight">Strategic Location</h2>
@@ -386,7 +298,7 @@ export default function HostelDetailsPage() {
                             <div className="absolute top-0 right-0 w-32 h-32 bg-primary/20 rounded-bl-[4rem] -z-0" />
                             <div className="relative z-10 space-y-8">
                                 <div className="flex items-end gap-2">
-                                    <span className="text-6xl font-black text-white tracking-tighter">₹12.5k</span>
+                                    <span className="text-6xl font-black text-white tracking-tighter">₹{hostel.baseRent || 12500}</span>
                                     <span className="text-white/40 font-bold mb-2 uppercase tracking-widest text-xs">/ month</span>
                                 </div>
 
@@ -434,7 +346,7 @@ export default function HostelDetailsPage() {
                             <div>
                                 <div className="text-[10px] font-black uppercase tracking-widest text-dark-light mb-1">Chief Warden</div>
                                 <div className="text-xl font-black text-dark tracking-tight">{hostel.wardenInfo?.name || 'Dr. Arjun Mehta'}</div>
-                                <div className="text-sm font-bold text-primary">Office Ref: WH402</div>
+                                <div className="text-sm font-bold text-primary">{hostel.wardenInfo?.phone || 'Contact Admin'}</div>
                             </div>
                         </div>
                     </div>

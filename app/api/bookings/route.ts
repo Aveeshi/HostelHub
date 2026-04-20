@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, addDoc } from 'firebase/firestore';
 
 export async function POST(request: NextRequest) {
     try {
@@ -10,14 +11,20 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const result = await pool.query(
-            `INSERT INTO bookings (hostel_block_id, student_id, check_in, check_out, amount, status)
-             VALUES ($1, $2, $3, $4, $5, 'Confirmed')
-             RETURNING *`,
-            [hostelId, studentId, checkIn, checkOut, amount || 0]
-        );
+        const bookingsRef = collection(db, 'bookings');
+        const newBooking = {
+            hostelId,
+            studentId,
+            checkIn,
+            checkOut,
+            amount: amount || 0,
+            status: 'Confirmed',
+            created_at: new Date().toISOString()
+        };
 
-        return NextResponse.json({ ...result.rows[0], _id: result.rows[0].id }, { status: 201 });
+        const docRef = await addDoc(bookingsRef, newBooking);
+
+        return NextResponse.json({ ...newBooking, _id: docRef.id, id: docRef.id }, { status: 201 });
     } catch (error: any) {
         console.error('Error creating booking:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });

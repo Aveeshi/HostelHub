@@ -107,8 +107,8 @@ export default function HostelBlockCard({ block }: HostelBlockCardProps) {
                 {/* Info Grid */}
                 <div className="grid grid-cols-2 gap-4 mb-8">
                     <div className="bg-light/50 p-4 rounded-2xl border border-gray-50">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-dark-light mb-1">Available</div>
-                        <div className="text-lg font-black text-dark">{block.availableRooms} Units</div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-dark-light mb-1">Available Beds</div>
+                        <div className="text-lg font-black text-dark">{block.availableRooms} Beds</div>
                     </div>
                     <div className="bg-light/50 p-4 rounded-2xl border border-gray-50">
                         <div className="text-[10px] font-black uppercase tracking-widest text-dark-light mb-1">Base Rent</div>
