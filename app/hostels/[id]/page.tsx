@@ -55,6 +55,7 @@ interface Hostel {
         occupants: number;
         capacity: number;
     }[];
+    baseRent: number;
 }
 
 const facilityIcons: { [key: string]: any } = {
