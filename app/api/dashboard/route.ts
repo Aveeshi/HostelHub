@@ -1,107 +1,104 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, doc, getDoc, orderBy, limit } from 'firebase/firestore';
 import { withStudent } from '@/lib/middleware';
 import { AuthenticatedRequest } from '@/types';
 
 export const GET = withStudent(async (request: AuthenticatedRequest) => {
     try {
         // Force the studentId to be the authenticated user's student ID
-        const studentLookupRes = await pool.query(
-            'SELECT id FROM students WHERE user_id = $1',
-            [request.user.id]
-        );
-        const studentId = studentLookupRes.rows[0]?.id;
-
-        if (!studentId) {
+        const studentsRef = collection(db, 'students');
+        const studentLookupQuery = query(studentsRef, where('user_id', '==', request.user.id));
+        const studentLookupSnapshot = await getDocs(studentLookupQuery);
+        
+        if (studentLookupSnapshot.empty) {
             return NextResponse.json({ error: 'Student profile not found' }, { status: 404 });
         }
+        
+        const studentDoc = studentLookupSnapshot.docs[0];
+        const studentId = studentDoc.id;
+        const studentData = studentDoc.data();
 
-        // Parallel fetching for premium performance
-        const [studentRes, complaintsRes, noticesRes, menuRes] = await Promise.all([
-            // 1. Student Info
-            pool.query(`
-                SELECT s.*, u.name, u.email, u.can_access_dashboard, hb.block_name 
-                FROM students s 
-                JOIN users u ON s.user_id = u.id 
-                LEFT JOIN hostel_blocks hb ON s.hostel_block_id = hb.id 
-                WHERE s.id = $1
-            `, [studentId]),
+        // 1. Fetch related data in parallel
+        const [complaintsSnapshot, noticesSnapshot, menuSnapshot, userDoc, hostelDoc] = await Promise.all([
+            // Recent Complaints
+            getDocs(query(
+                collection(db, 'complaints'),
+                where('student_id', '==', studentId),
+                orderBy('created_at', 'desc'),
+                limit(3)
+            )),
+            
+            // Recent Notices
+            getDocs(query(
+                collection(db, 'notices'),
+                orderBy('created_at', 'desc'),
+                limit(4)
+            )),
+            
+            // Today's Mess Menu
+            studentData.hostel_block_id ? getDocs(query(
+                collection(db, 'mess_menu'),
+                where('hostel_block_id', '==', studentData.hostel_block_id),
+                where('day', '==', new Date().toLocaleDateString('en-US', { weekday: 'long' }))
+            )) : Promise.resolve({ empty: true, docs: [] }),
 
-            // 2. Recent Complaints
-            pool.query(`
-                SELECT id, title, status, created_at 
-                FROM complaints 
-                WHERE student_id = $1 
-                ORDER BY created_at DESC 
-                LIMIT 3
-            `, [studentId]),
+            // User Info
+            getDoc(doc(db, 'users', request.user.id)),
 
-            // 3. Recent Notices
-            pool.query(`
-                SELECT n.*, hb.block_name 
-                FROM notices n 
-                LEFT JOIN hostel_blocks hb ON n.hostel_block_id = hb.id 
-                ORDER BY n.created_at DESC 
-                LIMIT 4
-            `, []),
-
-            // 4. Today's Mess Menu
-            pool.query(`
-                SELECT mm.* 
-                FROM mess_menu mm 
-                JOIN students s ON mm.hostel_block_id = s.hostel_block_id 
-                WHERE s.id = $1 AND mm.day ILIKE $2
-                LIMIT 1
-            `, [studentId, new Date().toLocaleDateString('en-US', { weekday: 'long' })])
+            // Hostel Info (if assigned)
+            studentData.hostel_block_id ? getDoc(doc(db, 'hostel_blocks', studentData.hostel_block_id)) : Promise.resolve({ exists: () => false })
         ]);
 
-        const student = studentRes.rows[0];
+        const userData = (userDoc as any).exists() ? (userDoc as any).data() : {};
+        const hostelData = (hostelDoc as any).exists() ? (hostelDoc as any).data() : {};
 
         // Map Student
-        const mappedStudent = student ? {
-            _id: student.id,
-            name: student.name,
-            rollNumber: student.roll_number,
-            roomNumber: student.room_number,
-            course: student.course,
-            year: student.year,
-            enrollmentStatus: student.enrollment_status,
-            canAccessDashboard: student.can_access_dashboard,
+        const mappedStudent = {
+            _id: studentId,
+            name: userData.name,
+            rollNumber: studentData.roll_number,
+            roomNumber: studentData.room_number,
+            course: studentData.course,
+            year: studentData.year,
+            enrollmentStatus: studentData.enrollment_status,
+            canAccessDashboard: userData.can_access_dashboard,
             feeStatus: {
-                // If dashboard access has already been granted, treat enrollment as approved.
-                isPaid: student.enrollment_status === 'Active' || student.can_access_dashboard === true,
-                lastPayment: student.updated_at
+                isPaid: studentData.enrollment_status === 'Active' || userData.can_access_dashboard === true,
+                lastPayment: studentData.updated_at
             }
-        } : null;
+        };
 
         // Map Complaints
-        const mappedComplaints = complaintsRes.rows.map(c => ({
-            _id: c.id,
-            title: c.title,
-            status: c.status,
-            createdAt: c.created_at
+        const mappedComplaints = (complaintsSnapshot as any).docs.map((d: any) => ({
+            _id: d.id,
+            ...d.data(),
+            createdAt: d.data().created_at
         }));
 
         // Map Notices
-        const mappedNotices = noticesRes.rows.map(n => ({
-            _id: n.id,
-            title: n.title,
-            content: n.content,
-            priority: n.priority,
-            type: n.priority === 'Urgent' ? 'Emergency' : n.priority === 'High' ? 'Important' : 'General',
-            from: {
-                role: 'Administrative Officer',
-                name: n.block_name || 'Hostel Hub System'
-            },
-            createdAt: n.created_at,
-            hostelName: n.block_name
-        }));
+        const mappedNotices = (noticesSnapshot as any).docs.map((d: any) => {
+            const n = d.data();
+            return {
+                _id: d.id,
+                title: n.title,
+                content: n.content,
+                priority: n.priority,
+                type: n.priority === 'Urgent' ? 'Emergency' : n.priority === 'High' ? 'Important' : 'General',
+                from: {
+                    role: 'Administrative Officer',
+                    name: 'Hostel Hub System'
+                },
+                createdAt: n.created_at,
+                hostelName: n.hostel_block_id === studentData.hostel_block_id ? (hostelData.block_name || 'Your Hostel') : 'Hostel Hub'
+            };
+        });
 
         // Map Menu
-        const menu = menuRes.rows[0];
+        const menuDoc = (menuSnapshot as any).docs[0];
+        const menu = menuDoc ? menuDoc.data() : null;
         const mappedMenu = menu ? {
-            _id: menu.id,
+            _id: menuDoc.id,
             date: new Date().toISOString(),
             day: menu.day,
             specialMenu: false,
@@ -150,6 +147,7 @@ export const GET = withStudent(async (request: AuthenticatedRequest) => {
 
     } catch (error: any) {
         console.error('Dashboard API Error:', error);
-        return NextResponse.json({ error: 'Failed to fetch dashboard data' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to fetch dashboard data', details: error.message }, { status: 500 });
     }
 });
+

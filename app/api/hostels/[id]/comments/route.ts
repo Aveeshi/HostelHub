@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, addDoc, doc, getDoc, orderBy } from 'firebase/firestore';
 
 export async function POST(
     request: NextRequest,
@@ -10,14 +11,22 @@ export async function POST(
         const body = await request.json();
         const { userId, userType, text, parentId } = body;
 
-        const result = await pool.query(
-            `INSERT INTO hostel_comments (hostel_block_id, user_id, user_type, comment_text, parent_id)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING *`,
-            [id, userId, userType, text, parentId || null]
-        );
+        const commentsRef = collection(db, 'hostel_comments');
+        const newComment = {
+            hostel_block_id: id,
+            user_id: userId,
+            user_type: userType,
+            comment_text: text,
+            parent_id: parentId || null,
+            created_at: new Date().toISOString()
+        };
 
-        return NextResponse.json({ success: true, comment: { ...result.rows[0], _id: result.rows[0].id } });
+        const docRef = await addDoc(commentsRef, newComment);
+
+        return NextResponse.json({ 
+            success: true, 
+            comment: { ...newComment, _id: docRef.id, id: docRef.id } 
+        });
     } catch (error: any) {
         console.error('Error creating comment:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -31,17 +40,36 @@ export async function GET(
     try {
         const { id } = await params;
 
-        const result = await pool.query(`
-            SELECT c.*, u.name as user_name 
-            FROM hostel_comments c
-            JOIN users u ON c.user_id = u.id
-            WHERE c.hostel_block_id = $1
-            ORDER BY c.created_at ASC
-        `, [id]);
+        const commentsRef = collection(db, 'hostel_comments');
+        const q = query(commentsRef, where('hostel_block_id', '==', id), orderBy('created_at', 'asc'));
+        const querySnapshot = await getDocs(q);
 
-        return NextResponse.json(result.rows.map(r => ({ ...r, _id: r.id, user: { name: r.user_name } })));
+        const comments = [];
+        for (const commentDoc of querySnapshot.docs) {
+            const data = commentDoc.data();
+            
+            // Fetch user info
+            let userName = 'Unknown User';
+            if (data.user_id) {
+                const userDocRef = doc(db, 'users', data.user_id);
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists()) {
+                    userName = userDoc.data().name;
+                }
+            }
+
+            comments.push({
+                ...data,
+                _id: commentDoc.id,
+                id: commentDoc.id,
+                user: { name: userName }
+            });
+        }
+
+        return NextResponse.json(comments);
     } catch (error: any) {
         console.error('Error fetching comments:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+

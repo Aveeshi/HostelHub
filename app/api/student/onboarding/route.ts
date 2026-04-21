@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { extractToken, verifyToken } from '@/lib/jwt';
 
 export async function PUT(request: NextRequest) {
-    let client;
     try {
         const token = extractToken(request);
         const user = token ? verifyToken(token) : null;
@@ -15,48 +15,38 @@ export async function PUT(request: NextRequest) {
         const body = await request.json();
         const { sleepHabit, drinksSmokes, college, intro, year } = body;
 
-        client = await pool.connect();
-        
         // Find the student record associated with this user
-        const studentRes = await client.query('SELECT id FROM students WHERE user_id = $1', [user.id || user._id]);
-        if (studentRes.rowCount === 0) {
+        const studentsRef = collection(db, 'students');
+        const q = query(studentsRef, where('user_id', '==', user.id || user._id));
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
             return NextResponse.json({ error: 'Student profile not found.' }, { status: 404 });
         }
-        const studentId = studentRes.rows[0].id;
+        
+        const studentDoc = querySnapshot.docs[0];
+        const studentId = studentDoc.id;
 
         // Update the student preferences
-        const updateQuery = `
-            UPDATE students 
-            SET 
-                sleep_habit = $1,
-                drinks_smokes = $2,
-                college = $3,
-                intro = $4,
-                year = COALESCE($5, year),
-                updated_at = NOW()
-            WHERE id = $6
-            RETURNING *
-        `;
+        const updateData: any = {
+            sleep_habit: sleepHabit || null,
+            drinks_smokes: drinksSmokes === 'yes' ? true : (drinksSmokes === 'no' ? false : null),
+            college: college || null,
+            intro: intro || null,
+            updated_at: new Date().toISOString()
+        };
         
-        const updateParams = [
-            sleepHabit || null,
-            drinksSmokes === 'yes' ? true : (drinksSmokes === 'no' ? false : null),
-            college || null,
-            intro || null,
-            year ? parseInt(year) : null,
-            studentId
-        ];
-
-        const updateRes = await client.query(updateQuery, updateParams);
-
-        if (updateRes.rowCount === 0) {
-            return NextResponse.json({ error: 'Failed to update profile.' }, { status: 500 });
+        if (year) {
+            updateData.year = parseInt(year);
         }
+
+        const studentDocRef = doc(db, 'students', studentId);
+        await updateDoc(studentDocRef, updateData);
 
         return NextResponse.json({
             success: true,
             message: 'Onboarding profile updated successfully.',
-            student: updateRes.rows[0]
+            student: { id: studentId, ...studentDoc.data(), ...updateData }
         }, { status: 200 });
 
     } catch (error: any) {
@@ -65,7 +55,6 @@ export async function PUT(request: NextRequest) {
             { error: 'Failed to update profile', details: error.message },
             { status: 500 }
         );
-    } finally {
-        if (client) client.release();
     }
 }
+

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { withStudentOrWarden } from '@/lib/middleware';
 import { AuthenticatedRequest } from '@/types';
 
@@ -10,74 +11,80 @@ export const GET = withStudentOrWarden(async (
     try {
         const { id } = await params;
 
-        // Security check: If Student, they can only view their own profile.
-        // Wardens and Admins can view any student profile.
-        if (request.user.role === 'Student') {
-            const ownershipCheck = await pool.query(
-                'SELECT 1 FROM students WHERE id = $1 AND user_id = $2',
-                [id, request.user.id]
-            );
+        // Fetch student doc
+        const studentDocRef = doc(db, 'students', id);
+        const studentDoc = await getDoc(studentDocRef);
 
-            if (ownershipCheck.rowCount === 0) {
-                return NextResponse.json(
-                    { error: 'Unauthorized: You can only view your own profile' },
-                    { status: 403 }
-                );
-            }
-        }
-
-        // Fetch student with related user and hostel block info
-        const result = await pool.query(`
-            SELECT 
-                s.*, 
-                u.name, u.email, u.phone, u.role, u.can_access_dashboard,
-                hb.block_name, hb.location as hostel_location
-            FROM students s
-            JOIN users u ON s.user_id = u.id
-            LEFT JOIN hostel_blocks hb ON s.hostel_block_id = hb.id
-            WHERE s.id = $1
-        `, [id]);
-
-        const student = result.rows[0];
-
-        if (!student) {
+        if (!studentDoc.exists()) {
             return NextResponse.json(
                 { error: 'Student not found' },
                 { status: 404 }
             );
         }
 
-        // Map to camelCase and integrated object format for frontend
+        const studentData = studentDoc.data();
+
+        // Security check: If Student, they can only view their own profile.
+        // Wardens and Admins can view any student profile.
+        if (request.user.role === 'Student' && studentData.user_id !== request.user.id) {
+            return NextResponse.json(
+                { error: 'Unauthorized: You can only view your own profile' },
+                { status: 403 }
+            );
+        }
+
+        // Fetch user info
+        let userData = {};
+        if (studentData.user_id) {
+            const userDocRef = doc(db, 'users', studentData.user_id);
+            const userDoc = await getDoc(userDocRef);
+            if (userDoc.exists()) {
+                userData = userDoc.data();
+            }
+        }
+
+        // Fetch hostel info
+        let hostelData: any = null;
+        if (studentData.hostel_block_id) {
+            const hostelDocRef = doc(db, 'hostel_blocks', studentData.hostel_block_id);
+            const hostelDoc = await getDoc(hostelDocRef);
+            if (hostelDoc.exists()) {
+                const hd = hostelDoc.data();
+                hostelData = {
+                    id: hostelDoc.id,
+                    name: hd.block_name,
+                    location: hd.location
+                };
+            }
+        }
+
+        // Map to integrated object format for frontend
         const mappedStudent = {
-            _id: student.id,
-            userId: student.user_id,
-            name: student.name,
-            email: student.email,
-            phone: student.phone,
-            rollNumber: student.roll_number,
-            course: student.course,
-            year: student.year,
-            department: student.department,
-            roomNumber: student.room_number,
-            enrollmentStatus: student.enrollment_status,
-            photo: student.photo,
-            canAccessDashboard: student.can_access_dashboard,
-            hostelInfo: student.hostel_block_id ? {
-                id: student.hostel_block_id,
-                name: student.block_name,
-                location: student.hostel_location
-            } : null,
+            _id: studentDoc.id,
+            userId: studentData.user_id,
+            name: (userData as any).name,
+            email: (userData as any).email,
+            phone: (userData as any).phone,
+            rollNumber: studentData.roll_number,
+            course: studentData.course,
+            year: studentData.year,
+            department: studentData.department,
+            roomNumber: studentData.room_number,
+            enrollmentStatus: studentData.enrollment_status,
+            photo: studentData.photo,
+            canAccessDashboard: (userData as any).can_access_dashboard,
+            hostelInfo: hostelData,
             feeStatus: {
-                isPaid: student.enrollment_status === 'Active', // Simplified logic for hackathon
-                lastPayment: student.updated_at
+                isPaid: studentData.enrollment_status === 'Active',
+                lastPayment: studentData.updated_at
             }
         };
 
         return NextResponse.json(mappedStudent);
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error fetching student:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch student' },
+            { error: 'Failed to fetch student', details: error.message },
             { status: 500 }
         );
     }
@@ -90,13 +97,20 @@ export const PUT = withStudentOrWarden(async (
     try {
         const { id } = await params;
 
-        // Security check: Only the student can update their own profile.
-        const ownershipCheck = await pool.query(
-            'SELECT 1 FROM students WHERE id = $1 AND user_id = $2',
-            [id, request.user.id]
-        );
+        const studentDocRef = doc(db, 'students', id);
+        const studentDoc = await getDoc(studentDocRef);
 
-        if (ownershipCheck.rowCount === 0) {
+        if (!studentDoc.exists()) {
+            return NextResponse.json(
+                { error: 'Student not found' },
+                { status: 404 }
+            );
+        }
+
+        const studentData = studentDoc.data();
+
+        // Security check: Only the student can update their own profile.
+        if (studentData.user_id !== request.user.id) {
             return NextResponse.json(
                 { error: 'Unauthorized: You can only update your own profile' },
                 { status: 403 }
@@ -115,45 +129,29 @@ export const PUT = withStudentOrWarden(async (
             'photo': 'photo'
         };
 
-        const fields = Object.entries(body)
-            .filter(([key]) => allowedFields[key])
-            .map(([key, value], index) => ({
-                col: allowedFields[key],
-                val: value,
-                index: index + 1
-            }));
+        const updateData: any = {
+            updated_at: new Date().toISOString()
+        };
 
-        if (fields.length === 0) {
+        Object.entries(body).forEach(([key, value]) => {
+            if (allowedFields[key]) {
+                updateData[allowedFields[key]] = value;
+            }
+        });
+
+        if (Object.keys(updateData).length <= 1) { // only updated_at
             return NextResponse.json({ error: 'No valid fields provided for update' }, { status: 400 });
         }
 
-        const setClause = fields.map(f => `${f.col} = $${f.index}`).join(', ');
-        const values = fields.map(f => f.val);
-        values.push(id);
+        await updateDoc(studentDocRef, updateData);
 
-        const query = `
-            UPDATE students 
-            SET ${setClause}, updated_at = NOW() 
-            WHERE id = $${fields.length + 1} 
-            RETURNING *
-        `;
-
-        const result = await pool.query(query, values);
-        const updated = result.rows[0];
-
-        if (!updated) {
-            return NextResponse.json(
-                { error: 'Student not found' },
-                { status: 404 }
-            );
-        }
-
-        return NextResponse.json({ ...updated, _id: updated.id });
-    } catch (error) {
+        return NextResponse.json({ ...studentData, ...updateData, _id: id, id: id });
+    } catch (error: any) {
         console.error('Error updating student:', error);
         return NextResponse.json(
-            { error: 'Failed to update student' },
+            { error: 'Failed to update student', details: error.message },
             { status: 500 }
         );
     }
 });
+

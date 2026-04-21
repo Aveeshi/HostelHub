@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, orderBy } from 'firebase/firestore';
 
 export async function GET(
     request: NextRequest,
@@ -8,22 +9,49 @@ export async function GET(
     try {
         const { id } = await params;
 
-        const reviewsRes = await pool.query(
-            'SELECT r.*, u.name as student_name FROM reviews r JOIN students s ON r.student_id = s.id JOIN users u ON s.user_id = u.id WHERE r.hostel_block_id = $1 ORDER BY r.created_at DESC',
-            [id]
-        );
+        const reviewsRef = collection(db, 'reviews');
+        const q = query(reviewsRef, where('hostel_block_id', '==', id), orderBy('created_at', 'desc'));
+        const querySnapshot = await getDocs(q);
 
-        const statsRes = await pool.query(
-            'SELECT AVG(rating) as average_rating, COUNT(*) as total_reviews FROM reviews WHERE hostel_block_id = $1',
-            [id]
-        );
+        let totalRating = 0;
+        const reviews: any[] = [];
 
-        const stats = statsRes.rows[0];
+        for (const reviewDoc of querySnapshot.docs) {
+            const data = reviewDoc.data();
+            totalRating += data.rating || 0;
+
+            // Fetch student/user name
+            let studentName = 'Anonymous';
+            if (data.student_id) {
+                const studentDoc = await getDoc(doc(db, 'students', data.student_id));
+                if (studentDoc.exists()) {
+                    const sData = studentDoc.data();
+                    if (sData.user_id) {
+                        const userDoc = await getDoc(doc(db, 'users', sData.user_id));
+                        if (userDoc.exists()) {
+                            studentName = userDoc.data().name;
+                        }
+                    }
+                }
+            }
+
+            reviews.push({
+                ...data,
+                _id: reviewDoc.id,
+                id: reviewDoc.id,
+                student_name: studentName
+            });
+        }
+
+        const stats = {
+            averageRating: querySnapshot.size > 0 ? totalRating / querySnapshot.size : 0,
+            totalReviews: querySnapshot.size
+        };
 
         return NextResponse.json({
-            reviews: reviewsRes.rows.map(r => ({ ...r, _id: r.id })),
-            averageRating: parseFloat(stats.average_rating || '0'),
-            totalReviews: parseInt(stats.total_reviews || '0')
+            reviews,
+            averageRating: stats.averageRating,
+            totalReviews: stats.totalReviews
         });
     } catch (error: any) {
         console.error('Error fetching reviews:', error);
@@ -35,37 +63,42 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
-    const client = await pool.connect();
     try {
         const { id } = await params;
         const body = await request.json();
         const { studentId, rating, reviewText } = body;
 
-        await client.query('BEGIN');
+        const reviewsRef = collection(db, 'reviews');
+        const newReview = {
+            student_id: studentId,
+            hostel_block_id: id,
+            rating: parseInt(rating),
+            review_text: reviewText,
+            helpful: 0,
+            created_at: new Date().toISOString()
+        };
 
-        const insertRes = await client.query(
-            `INSERT INTO reviews (student_id, hostel_block_id, rating, review_text)
-             VALUES ($1, $2, $3, $4)
-             RETURNING *`,
-            [studentId, id, rating, reviewText]
-        );
+        const docRef = await addDoc(reviewsRef, newReview);
 
         // Update overall rating in hostel_blocks
-        await client.query(
-            `UPDATE hostel_blocks 
-             SET rating = (SELECT AVG(rating) FROM reviews WHERE hostel_block_id = $1)
-             WHERE id = $1`,
-            [id]
-        );
+        // 1. Fetch all reviews for this block
+        const q = query(reviewsRef, where('hostel_block_id', '==', id));
+        const snapshot = await getDocs(q);
+        let total = 0;
+        snapshot.forEach(d => total += (d.data().rating || 0));
+        const avg = snapshot.size > 0 ? total / snapshot.size : rating;
 
-        await client.query('COMMIT');
+        // 2. Update hostel block
+        const hostelRef = doc(db, 'hostel_blocks', id);
+        await updateDoc(hostelRef, { rating: avg });
 
-        return NextResponse.json({ success: true, review: { ...insertRes.rows[0], _id: insertRes.rows[0].id } });
+        return NextResponse.json({ 
+            success: true, 
+            review: { ...newReview, _id: docRef.id, id: docRef.id } 
+        });
     } catch (error: any) {
-        await client.query('ROLLBACK');
         console.error('Error posting review:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
-    } finally {
-        client.release();
     }
 }
+

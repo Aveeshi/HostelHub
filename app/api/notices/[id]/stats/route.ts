@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, doc, getDoc, orderBy } from 'firebase/firestore';
 
 export async function GET(
     request: NextRequest,
@@ -8,27 +9,52 @@ export async function GET(
     try {
         const { id } = await params;
 
-        const acknowledgementsRes = await pool.query(`
-            SELECT na.acknowledged_at, u.name, u.email, s.photo
-            FROM notice_acknowledgements na
-            JOIN students s ON na.student_id = s.id
-            JOIN users u ON s.user_id = u.id
-            WHERE na.notice_id = $1
-            ORDER BY na.acknowledged_at DESC
-        `, [id]);
+        const acksRef = collection(db, 'notice_acknowledgements');
+        const q = query(acksRef, where('notice_id', '==', id), orderBy('acknowledged_at', 'desc'));
+        const snapshot = await getDocs(q);
+
+        const acknowledgements = [];
+        for (const ackDoc of snapshot.docs) {
+            const data = ackDoc.data();
+            
+            // Hydrate student and user info
+            let studentInfo: any = {};
+            if (data.student_id) {
+                const sDoc = await getDoc(doc(db, 'students', data.student_id));
+                if (sDoc.exists()) {
+                    const sData = sDoc.data();
+                    studentInfo.photo = sData.photo;
+                    
+                    if (sData.user_id) {
+                        const uDoc = await getDoc(doc(db, 'users', sData.user_id));
+                        if (uDoc.exists()) {
+                            const uData = uDoc.data();
+                            studentInfo.name = uData.name;
+                            studentInfo.email = uData.email;
+                        }
+                    }
+                }
+            }
+
+            acknowledgements.push({
+                acknowledged_at: data.acknowledged_at,
+                ...studentInfo
+            });
+        }
 
         return NextResponse.json({
             success: true,
             noticeId: id,
-            totalAcknowledgements: acknowledgementsRes.rowCount,
-            acknowledgements: acknowledgementsRes.rows
+            totalAcknowledgements: acknowledgements.length,
+            acknowledgements: acknowledgements
         });
 
     } catch (error: any) {
         console.error('Error fetching notice stats:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch notice stats' },
+            { error: 'Failed to fetch notice stats', details: error.message },
             { status: 500 }
         );
     }
 }
+

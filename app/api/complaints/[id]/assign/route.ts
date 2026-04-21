@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 
 export async function POST(
     request: NextRequest,
@@ -10,30 +11,30 @@ export async function POST(
         const body = await request.json();
         const { assignedTo, eta } = body;
 
-        const result = await pool.query(
-            `UPDATE complaints 
-             SET assigned_to = $1, 
-                 assigned_at = NOW(), 
-                 eta = $2, 
-                 status = 'Assigned',
-                 updated_at = NOW()
-             WHERE id = $3 
-             RETURNING *`,
-            [assignedTo, eta ? new Date(eta) : null, id]
-        );
-
-        const complaint = result.rows[0];
-
-        if (!complaint) {
+        const docRef = doc(db, 'complaints', id);
+        const docSnap = await getDoc(docRef);
+        
+        if (!docSnap.exists()) {
             return NextResponse.json(
                 { error: 'Complaint not found' },
                 { status: 404 }
             );
         }
 
+        const updates = {
+            assigned_to: assignedTo,
+            assigned_at: new Date().toISOString(),
+            eta: eta ? new Date(eta).toISOString() : null,
+            status: 'Assigned',
+            updated_at: new Date().toISOString()
+        };
+
+        await updateDoc(docRef, updates);
+        const updatedSnap = await getDoc(docRef);
+
         return NextResponse.json({
             success: true,
-            complaint: { ...complaint, _id: complaint.id },
+            complaint: { ...updatedSnap.data(), _id: id, id: id },
             message: 'Complaint assigned successfully'
         });
     } catch (error: any) {
@@ -44,3 +45,4 @@ export async function POST(
         );
     }
 }
+

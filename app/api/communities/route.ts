@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, getDocs, addDoc, orderBy } from 'firebase/firestore';
 
 export async function GET(request: NextRequest) {
     try {
-        const result = await pool.query('SELECT * FROM communities ORDER BY member_count DESC');
-        return NextResponse.json(result.rows.map(r => ({ ...r, _id: r.id })));
+        const communitiesRef = collection(db, 'communities');
+        const q = query(communitiesRef, orderBy('member_count', 'desc'));
+        const snapshot = await getDocs(q);
+        
+        const communities = snapshot.docs.map(doc => ({
+            ...doc.data(),
+            _id: doc.id,
+            id: doc.id
+        }));
+
+        return NextResponse.json(communities);
     } catch (error: any) {
         console.error('Error fetching communities:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -16,16 +26,21 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { name, description, image } = body;
 
-        const result = await pool.query(
-            `INSERT INTO communities (name, description, image)
-             VALUES ($1, $2, $3)
-             RETURNING *`,
-            [name, description, image]
-        );
+        const communitiesRef = collection(db, 'communities');
+        const newCommunity = {
+            name,
+            description: description || '',
+            image: image || null,
+            member_count: 0,
+            created_at: new Date().toISOString()
+        };
 
-        return NextResponse.json({ ...result.rows[0], _id: result.rows[0].id }, { status: 201 });
+        const docRef = await addDoc(communitiesRef, newCommunity);
+
+        return NextResponse.json({ ...newCommunity, _id: docRef.id, id: docRef.id }, { status: 201 });
     } catch (error: any) {
         console.error('Error creating community:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+

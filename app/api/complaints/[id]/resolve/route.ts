@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 
 export async function POST(
     request: NextRequest,
@@ -10,30 +11,30 @@ export async function POST(
         const body = await request.json();
         const { resolutionNotes, resolutionPhotos } = body;
 
-        const result = await pool.query(
-            `UPDATE complaints 
-             SET status = 'Resolved', 
-                 resolved_at = NOW(), 
-                 resolution_notes = $1, 
-                 resolution_photos = $2,
-                 updated_at = NOW()
-             WHERE id = $3 
-             RETURNING *`,
-            [resolutionNotes, resolutionPhotos || [], id]
-        );
-
-        const complaint = result.rows[0];
-
-        if (!complaint) {
+        const docRef = doc(db, 'complaints', id);
+        const docSnap = await getDoc(docRef);
+        
+        if (!docSnap.exists()) {
             return NextResponse.json(
                 { error: 'Complaint not found' },
                 { status: 404 }
             );
         }
 
+        const updates = {
+            status: 'Resolved',
+            resolved_at: new Date().toISOString(),
+            resolution_notes: resolutionNotes || '',
+            resolution_photos: resolutionPhotos || [],
+            updated_at: new Date().toISOString()
+        };
+
+        await updateDoc(docRef, updates);
+        const updatedSnap = await getDoc(docRef);
+
         return NextResponse.json({
             success: true,
-            complaint: { ...complaint, _id: complaint.id },
+            complaint: { ...updatedSnap.data(), _id: id, id: id },
             message: 'Complaint resolved successfully'
         });
     } catch (error: any) {
@@ -44,3 +45,4 @@ export async function POST(
         );
     }
 }
+

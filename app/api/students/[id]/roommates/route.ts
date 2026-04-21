@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-
+import { db } from '@/lib/db';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { withStudent } from '@/lib/middleware';
 import { AuthenticatedRequest } from '@/types';
 
@@ -11,49 +11,77 @@ export const GET = withStudent(async (
     try {
         const { id } = await params;
 
-        // Security check: Match URL student ID with authenticated user ID
-        const ownershipCheck = await pool.query(
-            'SELECT 1 FROM students WHERE id = $1 AND user_id = $2',
-            [id, request.user.id]
-        );
+        // 1. Get current student
+        const studentDocRef = doc(db, 'students', id);
+        const studentDoc = await getDoc(studentDocRef);
 
-        if (ownershipCheck.rowCount === 0) {
+        if (!studentDoc.exists()) {
+            return NextResponse.json({ error: 'Student not found' }, { status: 404 });
+        }
+
+        const studentData = studentDoc.data();
+
+        // Security check: Match URL student ID with authenticated user ID
+        if (studentData.user_id !== request.user.id) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 403 }
             );
         }
 
-        // 1. Get current student's block and room
-        const studentRes = await pool.query(
-            'SELECT hostel_block_id, room_number FROM students WHERE id = $1',
-            [id]
-        );
-        const student = studentRes.rows[0];
-
-        if (!student || !student.hostel_block_id || !student.room_number) {
+        if (!studentData.hostel_block_id || !studentData.room_number) {
             return NextResponse.json({ success: true, roommates: [] });
         }
 
         // 2. Find others in the same room
-        const roommatesRes = await pool.query(`
-            SELECT s.id, u.name, u.email, s.photo, s.course, s.year 
-            FROM students s
-            JOIN users u ON s.user_id = u.id
-            WHERE s.hostel_block_id = $1 
-              AND s.room_number = $2 
-              AND s.id != $3
-        `, [student.hostel_block_id, student.room_number, id]);
+        const studentsRef = collection(db, 'students');
+        const q = query(
+            studentsRef, 
+            where('hostel_block_id', '==', studentData.hostel_block_id),
+            where('room_number', '==', studentData.room_number)
+        );
+        
+        const querySnapshot = await getDocs(q);
+        
+        const roommates: any[] = [];
+        
+        for (const roommateDoc of querySnapshot.docs) {
+            if (roommateDoc.id === id) continue; // Skip current student
+            
+            const rData = roommateDoc.data();
+            
+            // Fetch user info for roommate
+            let userData = { name: 'Unknown', email: '' };
+            if (rData.user_id) {
+                const userDocRef = doc(db, 'users', rData.user_id);
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists()) {
+                    const ud = userDoc.data();
+                    userData = { name: ud.name, email: ud.email };
+                }
+            }
+            
+            roommates.push({
+                _id: roommateDoc.id,
+                id: roommateDoc.id,
+                name: userData.name,
+                email: userData.email,
+                photo: rData.photo,
+                course: rData.course,
+                year: rData.year
+            });
+        }
 
         return NextResponse.json({
             success: true,
-            roommates: roommatesRes.rows.map(r => ({ ...r, _id: r.id }))
+            roommates
         });
     } catch (error: any) {
         console.error('Error fetching roommates:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch roommates' },
+            { error: 'Failed to fetch roommates', details: error.message },
             { status: 500 }
         );
     }
 });
+

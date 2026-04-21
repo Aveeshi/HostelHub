@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, doc, getDoc, orderBy } from 'firebase/firestore';
 
 // GET /api/applications/hostel/[id] - List applications for a specific hostel (Warden view)
 export async function GET(
@@ -9,39 +10,54 @@ export async function GET(
     try {
         const { id } = await context.params;
 
-        const res = await pool.query(
-            `SELECT 
-                ha.*,
-                s.roll_number, s.course, s.year, s.department,
-                u.name, u.email, u.phone
-             FROM hostel_applications ha
-             JOIN students s ON ha.student_id = s.id
-             JOIN users u ON s.user_id = u.id
-             WHERE ha.hostel_block_id = $1
-             ORDER BY ha.created_at DESC`,
-            [id]
-        );
+        const applicationsRef = collection(db, 'hostel_applications');
+        const q = query(applicationsRef, where('hostel_block_id', '==', id), orderBy('created_at', 'desc'));
+        const snapshot = await getDocs(q);
 
-        // Map to match frontend expectations (Student object populated)
-        const applications = res.rows.map(row => ({
-            _id: row.id,
-            status: row.status,
-            applicationData: row.application_data,
-            createdAt: row.created_at,
-            hostelBlockId: row.hostel_block_id,
-            // Construct student object as expected by frontend populate
-            studentId: {
-                _id: row.student_id,
-                name: row.name,
-                email: row.email,
-                phone: row.phone,
-                rollNumber: row.roll_number,
-                course: row.course,
-                year: row.year,
-                department: row.department,
-                feeStatus: 'Paid' // Mocking for now as column is missing
+        const applications = [];
+        for (const appDoc of snapshot.docs) {
+            const appData = appDoc.data();
+            
+            // Hydrate student and user info
+            let studentInfo: any = { _id: appData.student_id };
+            if (appData.student_id) {
+                const sDoc = await getDoc(doc(db, 'students', appData.student_id));
+                if (sDoc.exists()) {
+                    const sData = sDoc.data();
+                    studentInfo = {
+                        _id: sDoc.id,
+                        rollNumber: sData.roll_number,
+                        course: sData.course,
+                        year: sData.year,
+                        department: sData.department,
+                        feeStatus: 'Paid'
+                    };
+                    
+                    // Fetch user info
+                    if (sData.user_id) {
+                        const uDoc = await getDoc(doc(db, 'users', sData.user_id));
+                        if (uDoc.exists()) {
+                            const uData = uDoc.data();
+                            studentInfo = {
+                                ...studentInfo,
+                                name: uData.name,
+                                email: uData.email,
+                                phone: uData.phone
+                            };
+                        }
+                    }
+                }
             }
-        }));
+
+            applications.push({
+                _id: appDoc.id,
+                status: appData.status,
+                applicationData: appData.application_data,
+                createdAt: appData.created_at,
+                hostelBlockId: appData.hostel_block_id,
+                studentId: studentInfo
+            });
+        }
 
         return NextResponse.json(applications);
 
@@ -53,3 +69,4 @@ export async function GET(
         );
     }
 }
+

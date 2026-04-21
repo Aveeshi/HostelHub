@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { doc, updateDoc, increment, getDoc } from 'firebase/firestore';
 
 export async function POST(
     request: NextRequest,
@@ -8,21 +9,27 @@ export async function POST(
     try {
         const { reviewId } = await params;
 
-        const result = await pool.query(
-            `UPDATE reviews 
-             SET helpful = helpful + 1 
-             WHERE id = $1 
-             RETURNING helpful`,
-            [reviewId]
-        );
+        const reviewRef = doc(db, 'reviews', reviewId);
+        
+        // Update the document with atomic increment
+        await updateDoc(reviewRef, {
+            helpful: increment(1)
+        });
 
-        if (result.rowCount === 0) {
+        // Fetch again to return the new count
+        const updatedSnap = await getDoc(reviewRef);
+        
+        if (!updatedSnap.exists()) {
             return NextResponse.json({ error: 'Review not found' }, { status: 404 });
         }
 
-        return NextResponse.json({ success: true, helpfulCount: result.rows[0].helpful });
+        return NextResponse.json({ 
+            success: true, 
+            helpfulCount: updatedSnap.data().helpful 
+        });
     } catch (error: any) {
         console.error('Error marking review as helpful:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+

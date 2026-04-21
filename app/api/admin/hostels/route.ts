@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, doc, getDoc, orderBy } from 'firebase/firestore';
 import { withAdmin } from '@/lib/middleware';
 
 export const GET = withAdmin(async (request: NextRequest) => {
@@ -8,48 +8,61 @@ export const GET = withAdmin(async (request: NextRequest) => {
         const { searchParams } = new URL(request.url);
         const status = searchParams.get('status');
 
-        let query = `
-            SELECT hb.*, u.name as warden_name, u.email as warden_email 
-            FROM hostel_blocks hb 
-            LEFT JOIN users u ON hb.warden_user_id = u.id
-            WHERE 1=1
-        `;
-        const params: any[] = [];
-        let paramIndex = 1;
+        const blocksRef = collection(db, 'hostel_blocks');
+        let q;
 
         if (status && status !== 'All') {
-            // We'll add the approval_status check. Since we might not have the column, 
-            // we'll use a fallback or ensure it's added.
-            query += ` AND (hb.approval_status = $${paramIndex} OR ($${paramIndex} = 'Approved' AND hb.approval_status IS NULL))`;
-            params.push(status);
-            paramIndex++;
+            q = query(
+                blocksRef, 
+                where('approval_status', '==', status),
+                orderBy('created_at', 'desc')
+            );
+        } else {
+            q = query(blocksRef, orderBy('created_at', 'desc'));
         }
 
-        query += ' ORDER BY hb.created_at DESC';
+        const snapshot = await getDocs(q);
+        const hostels = [];
 
-        const result = await pool.query(query, params);
-
-        return NextResponse.json(result.rows.map(r => ({
-            _id: r.id,
-            blockName: r.block_name,
-            type: r.type,
-            description: r.description,
-            totalRooms: r.total_rooms,
-            availableRooms: r.available_rooms,
-            occupiedRooms: r.occupied_rooms,
-            location: r.location,
-            rating: parseFloat(r.rating || 0),
-            approvalStatus: r.approval_status || 'Approved',
-            wardenInfo: {
-                name: r.warden_name || 'Unassigned',
-                email: r.warden_email || 'n/a'
+        for (const blockDoc of snapshot.docs) {
+            const data = blockDoc.data();
+            
+            // Fetch warden info
+            let wardenInfo = { name: 'Unassigned', email: 'n/a' };
+            if (data.warden_user_id) {
+                const userDocRef = doc(db, 'users', data.warden_user_id);
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists()) {
+                    const uData = userDoc.data();
+                    wardenInfo = {
+                        name: uData.name || 'Unknown',
+                        email: uData.email || 'n/a'
+                    };
+                }
             }
-        })));
+
+            hostels.push({
+                _id: blockDoc.id,
+                blockName: data.block_name,
+                type: data.type,
+                description: data.description,
+                totalRooms: data.total_rooms,
+                availableRooms: data.available_rooms,
+                occupiedRooms: data.occupied_rooms,
+                location: data.location,
+                rating: parseFloat(data.rating || 0),
+                approvalStatus: data.approval_status || 'Approved',
+                wardenInfo
+            });
+        }
+
+        return NextResponse.json(hostels);
     } catch (error: any) {
         console.error('Error fetching hostels for admin:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch hostels' },
+            { error: 'Failed to fetch hostels', details: error.message },
             { status: 500 }
         );
     }
 });
+

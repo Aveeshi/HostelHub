@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, doc, getDoc, orderBy, limit } from 'firebase/firestore';
 import { withWarden } from '@/lib/middleware';
 import { AuthenticatedRequest } from '@/types';
 
@@ -12,11 +12,15 @@ export const GET = withWarden(async (request: AuthenticatedRequest) => {
         const wardenId = request.user?.id;
 
         // Get the blocks this warden is responsible for
-        const wardenBlocksRes = await pool.query(
-            'SELECT id FROM hostel_blocks WHERE warden_user_id = $1',
-            [wardenId]
-        );
-        const wardenBlockIds = wardenBlocksRes.rows.map(b => b.id);
+        const blocksRef = collection(db, 'hostel_blocks');
+        const wardenBlocksQuery = query(blocksRef, where('warden_user_id', '==', wardenId));
+        const wardenBlocksSnapshot = await getDocs(wardenBlocksQuery);
+        
+        const wardenBlocks = wardenBlocksSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        const wardenBlockIds = wardenBlocks.map(b => b.id);
 
         if (wardenBlockIds.length === 0 && request.user?.role !== 'Admin') {
             return NextResponse.json({
@@ -30,89 +34,89 @@ export const GET = withWarden(async (request: AuthenticatedRequest) => {
         // Use selected blockId or all warden blocks
         const targetBlockIds = blockId ? [blockId] : wardenBlockIds;
 
-        // Get hostel block stats
-        const blockStatsRes = await pool.query(
-            `SELECT COUNT(*) as total_blocks FROM hostel_blocks WHERE id = ANY($1)`,
-            [wardenBlockIds]
-        );
-        const totalBlocks = parseInt(blockStatsRes.rows[0]?.total_blocks || '0');
+        // 1. Fetch Students count
+        const studentsRef = collection(db, 'students');
+        // Firestore doesn't support 'in' with more than 30 values, but usually it's few blocks
+        const studentQuery = query(studentsRef, where('hostel_block_id', 'in', targetBlockIds));
+        const studentSnapshot = await getDocs(studentQuery);
+        const studentsCount = studentSnapshot.size;
 
-        // Get student stats
-        const studentStatsRes = await pool.query(
-            `SELECT COUNT(*) as count FROM students WHERE hostel_block_id = ANY($1)`,
-            [targetBlockIds]
-        );
-        const studentsCount = parseInt(studentStatsRes.rows[0]?.count || '0');
-
-        // Get application stats
-        const appStatsRes = await pool.query(
-            `SELECT status, COUNT(*) as count FROM hostel_applications WHERE hostel_block_id = ANY($1) GROUP BY status`,
-            [targetBlockIds]
-        );
-
+        // 2. Fetch Applications
+        const applicationsRef = collection(db, 'hostel_applications');
+        const appQuery = query(applicationsRef, where('hostel_block_id', 'in', targetBlockIds), orderBy('created_at', 'desc'), limit(20));
+        const appSnapshot = await getDocs(appQuery);
+        
         let pendingApplications = 0;
         let acceptedApplications = 0;
-        appStatsRes.rows.forEach(row => {
-            if (row.status === 'Pending') pendingApplications = parseInt(row.count);
-            if (row.status === 'Accepted') acceptedApplications = parseInt(row.count);
+        
+        // We'll calculate totals from all applications for these blocks
+        // Ideally we'd have a separate counter or fetch all if small, but let's do a summary query
+        const allAppsQuery = query(applicationsRef, where('hostel_block_id', 'in', targetBlockIds));
+        const allAppsSnapshot = await getDocs(allAppsQuery);
+        allAppsSnapshot.forEach(doc => {
+            const status = doc.data().status;
+            if (status === 'Pending') pendingApplications++;
+            if (status === 'Accepted') acceptedApplications++;
         });
 
-        // Get occupancy stats for hostel blocks
-        const occupancyRes = await pool.query(
-            `SELECT id, block_name, type, total_rooms, occupied_rooms, available_rooms 
-             FROM hostel_blocks 
-             WHERE id = ANY($1)`,
-            [wardenBlockIds]
-        );
-
-        const occupancyStats = occupancyRes.rows.map(block => ({
+        // 3. Occupancy Stats
+        const occupancyStats = wardenBlocks.map((block: any) => ({
             blockId: block.id,
             blockName: block.block_name,
             type: block.type,
-            totalRooms: block.total_rooms,
-            occupiedRooms: block.occupied_rooms,
-            availableRooms: block.available_rooms,
-            occupancyRate: ((block.occupied_rooms / block.total_rooms) * 100).toFixed(1)
+            totalRooms: block.total_rooms || 0,
+            occupiedRooms: block.occupied_rooms || 0,
+            availableRooms: block.available_rooms || 0,
+            occupancyRate: block.total_rooms ? ((block.occupied_rooms / block.total_rooms) * 100).toFixed(1) : "0.0"
         }));
 
-        // Get recent applications with student info
-        const applicationsRes = await pool.query(
-            `SELECT 
-                ha.id, ha.status, ha.application_data, ha.created_at, ha.hostel_block_id,
-                s.id as student_id, s.roll_number, s.course, s.year, s.department,
-                u.name, u.email, u.phone
-             FROM hostel_applications ha
-             JOIN students s ON ha.student_id = s.id
-             JOIN users u ON s.user_id = u.id
-             WHERE ha.hostel_block_id = ANY($1)
-             ORDER BY ha.created_at DESC
-             LIMIT 20`,
-            [targetBlockIds]
-        );
-
-        const applications = applicationsRes.rows.map(row => ({
-            _id: row.id,
-            status: row.status,
-            applicationData: row.application_data,
-            createdAt: row.created_at,
-            hostelBlockId: row.hostel_block_id,
-            studentId: {
-                _id: row.student_id,
-                name: row.name,
-                email: row.email,
-                phone: row.phone,
-                rollNumber: row.roll_number,
-                course: row.course,
-                year: row.year,
-                department: row.department,
-                feeStatus: { isPaid: true } // Mock for now
+        // 4. Map Recent Applications with Student and User info
+        const applications = [];
+        for (const appDoc of appSnapshot.docs) {
+            const appData = appDoc.data();
+            
+            // Get Student
+            let sData: any = {};
+            if (appData.student_id) {
+                const sDoc = await getDoc(doc(db, 'students', appData.student_id));
+                if (sDoc.exists()) {
+                    sData = sDoc.data();
+                    
+                    // Get User
+                    if (sData.user_id) {
+                        const uDoc = await getDoc(doc(db, 'users', sData.user_id));
+                        if (uDoc.exists()) {
+                            const uData = uDoc.data();
+                            sData = { ...sData, name: uData.name, email: uData.email, phone: uData.phone };
+                        }
+                    }
+                }
             }
-        }));
+            
+            applications.push({
+                _id: appDoc.id,
+                status: appData.status,
+                applicationData: appData.application_data,
+                createdAt: appData.created_at,
+                hostelBlockId: appData.hostel_block_id,
+                studentId: {
+                    _id: appData.student_id,
+                    name: sData.name || 'Unknown',
+                    email: sData.email || '',
+                    phone: sData.phone || '',
+                    rollNumber: sData.roll_number,
+                    course: sData.course,
+                    year: sData.year,
+                    department: sData.department,
+                    feeStatus: { isPaid: true }
+                }
+            });
+        }
 
         return NextResponse.json({
             success: true,
             stats: {
-                totalBlocks,
+                totalBlocks: wardenBlocks.length,
                 totalStudents: studentsCount,
                 studentsInBlock: blockId ? studentsCount : null,
                 pendingApplications,
@@ -136,3 +140,4 @@ export const GET = withWarden(async (request: AuthenticatedRequest) => {
         );
     }
 });
+

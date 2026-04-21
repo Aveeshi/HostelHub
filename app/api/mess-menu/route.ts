@@ -1,34 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, addDoc, doc, getDoc } from 'firebase/firestore';
 
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const blockId = searchParams.get('blockId');
         const day = searchParams.get('day');
-        const date = searchParams.get('date'); // Add date support if needed, or map to day
 
-        let query = `
-            SELECT mm.*, hb.block_name 
-            FROM mess_menu mm
-            LEFT JOIN hostel_blocks hb ON mm.hostel_block_id = hb.id
-            WHERE 1=1
-        `;
-        const params: any[] = [];
-        let paramIndex = 1;
+        const menuRef = collection(db, 'mess_menu');
+        const qConstraints = [];
+        
+        if (blockId) qConstraints.push(where('hostel_block_id', '==', blockId));
+        if (day) qConstraints.push(where('day', '==', day));
 
-        if (blockId) {
-            query += ` AND mm.hostel_block_id = $${paramIndex}`;
-            params.push(blockId);
-            paramIndex++;
-        }
-        if (day) {
-            query += ` AND mm.day ILIKE $${paramIndex}`;
-            params.push(day);
-            paramIndex++;
-        }
-
-        const res = await pool.query(query, params);
+        const q = qConstraints.length > 0 ? query(menuRef, ...qConstraints) : query(menuRef);
+        const snapshot = await getDocs(q);
 
         const mapMeal = (mealType: string, items: string, timings: string, calories: number) => ({
             mealType,
@@ -37,24 +24,39 @@ export async function GET(request: NextRequest) {
             calories
         });
 
-        const mappedMenus = res.rows.map(row => ({
-            _id: row.id,
-            date: new Date().toISOString(), // Mock date for UI consistency
-            day: row.day,
-            hostelName: row.block_name,
-            meals: [
-                mapMeal('Breakfast', row.breakfast, '07:30 AM - 09:30 AM', 450),
-                mapMeal('Lunch', row.lunch, '12:30 PM - 02:30 PM', 850),
-                mapMeal('Snacks', row.snacks, '04:30 PM - 05:30 PM', 300),
-                mapMeal('Dinner', row.dinner, '07:30 PM - 09:30 PM', 750)
-            ]
-        }));
+        const mappedMenus = [];
+        for (const menuDoc of snapshot.docs) {
+            const row = menuDoc.data();
+            
+            // Fetch hostel block info
+            let blockName = 'Unknown Hostel';
+            if (row.hostel_block_id) {
+                const blockDoc = await getDoc(doc(db, 'hostel_blocks', row.hostel_block_id));
+                if (blockDoc.exists()) {
+                    blockName = blockDoc.data().block_name;
+                }
+            }
+
+            mappedMenus.push({
+                _id: menuDoc.id,
+                id: menuDoc.id,
+                date: new Date().toISOString(),
+                day: row.day,
+                hostelName: blockName,
+                meals: [
+                    mapMeal('Breakfast', row.breakfast, '07:30 AM - 09:30 AM', 450),
+                    mapMeal('Lunch', row.lunch, '12:30 PM - 02:30 PM', 850),
+                    mapMeal('Snacks', row.snacks, '04:30 PM - 05:30 PM', 300),
+                    mapMeal('Dinner', row.dinner, '07:30 PM - 09:30 PM', 750)
+                ]
+            });
+        }
 
         return NextResponse.json(day ? mappedMenus[0] : mappedMenus);
     } catch (error: any) {
         console.error('Error fetching mess menu:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch mess menu' },
+            { error: 'Failed to fetch mess menu', details: error.message },
             { status: 500 }
         );
     }
@@ -65,14 +67,20 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { hostelBlockId, day, breakfast, lunch, snacks, dinner } = body;
 
-        const res = await pool.query(
-            `INSERT INTO mess_menu (hostel_block_id, day, breakfast, lunch, snacks, dinner)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING *`,
-            [hostelBlockId, day, breakfast, lunch, snacks, dinner]
-        );
+        const menuRef = collection(db, 'mess_menu');
+        const newMenu = {
+            hostel_block_id: hostelBlockId,
+            day,
+            breakfast: breakfast || '',
+            lunch: lunch || '',
+            snacks: snacks || '',
+            dinner: dinner || '',
+            created_at: new Date().toISOString()
+        };
 
-        return NextResponse.json({ ...res.rows[0], _id: res.rows[0].id }, { status: 201 });
+        const docRef = await addDoc(menuRef, newMenu);
+
+        return NextResponse.json({ ...newMenu, _id: docRef.id, id: docRef.id }, { status: 201 });
     } catch (error: any) {
         console.error('Error creating mess menu:', error);
         return NextResponse.json(
@@ -81,3 +89,4 @@ export async function POST(request: NextRequest) {
         );
     }
 }
+

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
 import { withAdmin } from '@/lib/middleware';
 
@@ -16,29 +17,22 @@ export const PATCH = withAdmin(async (
             return NextResponse.json({ error: 'Invalid approval status' }, { status: 400 });
         }
 
-        // Assuming PostgreSQL schema might need these columns, adding them to dynamic update if they exist or just ignoring for now
-        // For the hackathon MVP, we'll just allow setting status if we have a column, 
-        // otherwise we'll just return success as a placeholder if the table doesn't have it yet.
-        // Let's assume we might need to add a 'status' or 'approval_status' column to hostel_blocks.
+        const docRef = doc(db, 'hostel_blocks', id);
+        const docSnap = await getDoc(docRef);
 
-        const result = await pool.query(
-            `UPDATE hostel_blocks 
-             SET approval_status = $1, updated_at = NOW()
-             WHERE id = $2 
-             RETURNING *`,
-            [status, id]
-        );
-
-        const hostel = result.rows[0];
-
-        if (!hostel) {
+        if (!docSnap.exists()) {
             return NextResponse.json({ error: 'Hostel not found' }, { status: 404 });
         }
+
+        await updateDoc(docRef, { approvalStatus: status });
+
+        const updatedSnap = await getDoc(docRef);
+        const hostel = updatedSnap.data();
 
         return NextResponse.json({
             success: true,
             message: `Hostel ${status.toLowerCase()} successfully`,
-            data: { ...hostel, _id: hostel.id }
+            data: { ...hostel, _id: id }
         });
 
     } catch (error: any) {

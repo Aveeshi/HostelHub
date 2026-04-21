@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, addDoc } from 'firebase/firestore';
 
 // POST /api/hostels/[id]/comments/[commentId]/reply - Reply to a comment
 export async function POST(
@@ -11,21 +12,25 @@ export async function POST(
         const body = await request.json();
         const { userId, text, userType } = body;
 
-        const result = await pool.query(
-            `INSERT INTO hostel_comments (hostel_block_id, user_id, user_type, comment_text, parent_id)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING *`,
-            [id, userId, userType || 'Student', text, commentId]
-        );
+        const commentsRef = collection(db, 'hostel_comments');
+        const newReply = {
+            hostel_block_id: id,
+            user_id: userId,
+            user_type: userType || 'Student',
+            comment_text: text,
+            parent_id: commentId,
+            created_at: new Date().toISOString()
+        };
 
-        const newReply = result.rows[0];
+        const docRef = await addDoc(commentsRef, newReply);
 
         return NextResponse.json({
             success: true,
-            reply: { ...newReply, _id: newReply.id }
+            reply: { ...newReply, _id: docRef.id, id: docRef.id }
         });
     } catch (error: any) {
         console.error('Error replying to comment:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+

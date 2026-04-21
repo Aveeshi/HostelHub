@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, addDoc, doc, getDoc, orderBy, limit as firestoreLimit } from 'firebase/firestore';
 import { withAuth, withWarden } from '@/lib/middleware';
 import { AuthenticatedRequest } from '@/types';
 
@@ -7,53 +8,74 @@ export const GET = withAuth(async (request: AuthenticatedRequest) => {
     try {
         const { searchParams } = new URL(request.url);
         const hostelBlockId = searchParams.get('hostelBlockId');
-        const limit = parseInt(searchParams.get('limit') || '10');
+        const limitCount = parseInt(searchParams.get('limit') || '10');
 
-        let query = `
-            SELECT n.*, hb.block_name 
-            FROM notices n
-            LEFT JOIN hostel_blocks hb ON n.hostel_block_id = hb.id
-            WHERE 1=1
-        `;
-        const params: any[] = [];
-        let paramIndex = 1;
+        const noticesRef = collection(db, 'notices');
+        let q;
 
         if (hostelBlockId) {
-            query += ` AND n.hostel_block_id = $${paramIndex}`;
-            params.push(hostelBlockId);
-            paramIndex++;
+            q = query(
+                noticesRef, 
+                where('hostel_block_id', '==', hostelBlockId),
+                orderBy('created_at', 'desc'),
+                firestoreLimit(limitCount)
+            );
+        } else {
+            q = query(noticesRef, orderBy('created_at', 'desc'), firestoreLimit(limitCount));
         }
 
-        query += ` ORDER BY CASE 
-            WHEN n.priority = 'Urgent' THEN 1 
-            WHEN n.priority = 'High' THEN 2 
-            ELSE 3 END, n.created_at DESC LIMIT $${paramIndex}`;
-        params.push(limit);
+        const snapshot = await getDocs(q);
+        const notices = [];
 
-        const result = await pool.query(query, params);
-
-        const notices = result.rows.map(row => ({
-            _id: row.id,
-            title: row.title,
-            content: row.content,
-            priority: row.priority,
-            createdAt: row.created_at,
-            expiresAt: row.expires_at,
-            hostelInfo: {
-                id: row.hostel_block_id,
-                name: row.block_name
-            },
-            type: row.priority === 'Urgent' ? 'Emergency' : 'General',
-            from: {
-                role: 'Administrative Officer',
-                name: 'Hostel Hub System'
+        for (const noticeDoc of snapshot.docs) {
+            const data = noticeDoc.data();
+            
+            // Fetch hostel block info
+            let blockName = 'Hostel Hub System';
+            if (data.hostel_block_id) {
+                const blockDoc = await getDoc(doc(db, 'hostel_blocks', data.hostel_block_id));
+                if (blockDoc.exists()) {
+                    blockName = blockDoc.data().block_name;
+                }
             }
-        }));
 
-        return NextResponse.json(notices);
+            notices.push({
+                _id: noticeDoc.id,
+                id: noticeDoc.id,
+                ...data,
+                createdAt: data.created_at,
+                expiresAt: data.expires_at,
+                hostelInfo: {
+                    id: data.hostel_block_id,
+                    name: blockName
+                },
+                type: data.priority === 'Urgent' ? 'Emergency' : 'General',
+                from: {
+                    role: 'Administrative Officer',
+                    name: 'Hostel Hub System'
+                }
+            });
+        }
+
+        // Apply secondary priority sorting: Urgent (1) > High (2) > Normal/Other (3)
+        const priorityScore = (p: string) => {
+            if (p === 'Urgent') return 1;
+            if (p === 'High') return 2;
+            return 3;
+        };
+
+        notices.sort((a, b) => {
+            const scoreA = priorityScore(a.priority);
+            const scoreB = priorityScore(b.priority);
+            if (scoreA !== scoreB) return scoreA - scoreB;
+            // Secondary sort by date (desc) - though already sorted by Firestore
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+
+        return NextResponse.json(notices.slice(0, limitCount));
     } catch (error: any) {
         console.error('Error fetching notices:', error);
-        return NextResponse.json({ error: 'Failed to fetch notices' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to fetch notices', details: error.message }, { status: 500 });
     }
 });
 
@@ -62,19 +84,25 @@ export const POST = withWarden(async (request: AuthenticatedRequest) => {
         const body = await request.json();
         const { hostelBlockId, title, content, priority, expiresAt } = body;
 
-        const res = await pool.query(
-            `INSERT INTO notices (hostel_block_id, title, content, priority, expires_at)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING *`,
-            [hostelBlockId, title, content, priority || 'Normal', expiresAt]
-        );
+        const noticesRef = collection(db, 'notices');
+        const newNotice = {
+            hostel_block_id: hostelBlockId,
+            title,
+            content,
+            priority: priority || 'Normal',
+            expires_at: expiresAt || null,
+            created_at: new Date().toISOString()
+        };
 
-        return NextResponse.json({ ...res.rows[0], _id: res.rows[0].id }, { status: 201 });
+        const docRef = await addDoc(noticesRef, newNotice);
+
+        return NextResponse.json({ ...newNotice, _id: docRef.id, id: docRef.id }, { status: 201 });
     } catch (error: any) {
         console.error('Error creating notice:', error);
         return NextResponse.json(
-            { error: 'Failed to create notice' },
+            { error: 'Failed to create notice', details: error.message },
             { status: 500 }
         );
     }
 });
+

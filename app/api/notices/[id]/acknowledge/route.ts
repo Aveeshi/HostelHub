@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 export async function PUT(
     request: NextRequest,
@@ -10,25 +11,42 @@ export async function PUT(
         const body = await request.json();
         const { studentId } = body;
 
-        // Use PostgreSQL ON CONFLICT to handle already acknowledged
-        const result = await pool.query(
-            `INSERT INTO notice_acknowledgements (notice_id, student_id)
-             VALUES ($1, $2)
-             ON CONFLICT (notice_id, student_id) DO NOTHING
-             RETURNING *`,
-            [id, studentId]
-        );
+        if (!studentId) {
+            return NextResponse.json({ error: 'Missing studentId' }, { status: 400 });
+        }
+
+        // Create a composite ID to ensure uniqueness (noticeId_studentId)
+        const ackId = `${id}_${studentId}`;
+        const ackRef = doc(db, 'notice_acknowledgements', ackId);
+        
+        const ackSnap = await getDoc(ackRef);
+        if (ackSnap.exists()) {
+            return NextResponse.json({
+                success: true,
+                acknowledged: false,
+                message: 'Already acknowledged'
+            });
+        }
+
+        const newAck = {
+            notice_id: id,
+            student_id: studentId,
+            acknowledged_at: new Date().toISOString()
+        };
+
+        await setDoc(ackRef, newAck);
 
         return NextResponse.json({
             success: true,
-            acknowledged: (result.rowCount ?? 0) > 0,
-            message: (result.rowCount ?? 0) > 0 ? 'Acknowledged' : 'Already acknowledged'
+            acknowledged: true,
+            message: 'Acknowledged'
         });
     } catch (error: any) {
         console.error('Error acknowledging notice:', error);
         return NextResponse.json(
-            { error: 'Failed to acknowledge notice' },
+            { error: 'Failed to acknowledge notice', details: error.message },
             { status: 500 }
         );
     }
 }
+

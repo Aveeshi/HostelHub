@@ -1,51 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, doc, getDoc, orderBy } from 'firebase/firestore';
 import { withStudent } from '@/lib/middleware';
 import { AuthenticatedRequest } from '@/types';
 
 export const GET = withStudent(async (request: AuthenticatedRequest) => {
     try {
         // Securely fetch the student ID from the database using the authenticated user ID
-        const studentLookupRes = await pool.query(
-            'SELECT id FROM students WHERE user_id = $1',
-            [request.user.id]
-        );
-        const studentId = studentLookupRes.rows[0]?.id;
-
-        if (!studentId) {
+        const studentsRef = collection(db, 'students');
+        const qStudent = query(studentsRef, where('user_id', '==', request.user.id));
+        const studentSnapshot = await getDocs(qStudent);
+        
+        if (studentSnapshot.empty) {
             return NextResponse.json(
                 { error: 'Student profile not found' },
                 { status: 404 }
             );
         }
 
-        const result = await pool.query(`
-            SELECT ha.*, hb.block_name, hb.type, hb.location 
-            FROM hostel_applications ha
-            JOIN hostel_blocks hb ON ha.hostel_block_id = hb.id
-            WHERE ha.student_id = $1
-            ORDER BY ha.created_at DESC
-        `, [studentId]);
+        const studentId = studentSnapshot.docs[0].id;
 
-        const applications = result.rows.map(row => ({
-            ...row,
-            _id: row.id,
-            hostelBlockId: {
-                _id: row.hostel_block_id,
-                blockName: row.block_name,
-                type: row.type,
-                location: row.location
+        const applicationsRef = collection(db, 'hostel_applications');
+        const qApps = query(applicationsRef, where('student_id', '==', studentId), orderBy('created_at', 'desc'));
+        const appSnapshot = await getDocs(qApps);
+
+        const applications = [];
+        for (const appDoc of appSnapshot.docs) {
+            const appData = appDoc.data();
+            
+            // Fetch hostel block info
+            let hostelBlockInfo: any = { _id: appData.hostel_block_id };
+            if (appData.hostel_block_id) {
+                const blockDoc = await getDoc(doc(db, 'hostel_blocks', appData.hostel_block_id));
+                if (blockDoc.exists()) {
+                    const bData = blockDoc.data();
+                    hostelBlockInfo = {
+                        _id: blockDoc.id,
+                        blockName: bData.block_name,
+                        type: bData.type,
+                        location: bData.location
+                    };
+                }
             }
-        }));
+
+            applications.push({
+                ...appData,
+                _id: appDoc.id,
+                id: appDoc.id,
+                hostelBlockId: hostelBlockInfo
+            });
+        }
 
         return NextResponse.json(applications);
 
     } catch (error: any) {
         console.error('Error fetching student applications:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch applications' },
+            { error: 'Failed to fetch applications', details: error.message },
             { status: 500 }
         );
     }
 });
+

@@ -1,32 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, where, getDocs, addDoc, doc, getDoc, orderBy, limit as firestoreLimit } from 'firebase/firestore';
 
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const userId = searchParams.get('userId');
 
-        let query = `
-            SELECT s.*, u.name as user_name 
-            FROM stories s
-            JOIN users u ON s.user_id = u.id
-            WHERE 1=1
-        `;
-        const params: any[] = [];
+        const storiesRef = collection(db, 'stories');
+        let q = query(storiesRef, orderBy('created_at', 'desc'), firestoreLimit(20));
+
         if (userId) {
-            query += ` AND s.user_id = $1`;
-            params.push(userId);
+            q = query(storiesRef, where('user_id', '==', userId), orderBy('created_at', 'desc'), firestoreLimit(20));
         }
 
-        query += ` ORDER BY s.created_at DESC LIMIT 20`;
+        const snapshot = await getDocs(q);
+        const stories = [];
 
-        const result = await pool.query(query, params);
+        for (const storyDoc of snapshot.docs) {
+            const data = storyDoc.data();
+            
+            // Hydrate author info
+            let authorName = 'Anonymous';
+            if (data.user_id) {
+                const userDoc = await getDoc(doc(db, 'users', data.user_id));
+                if (userDoc.exists()) {
+                    authorName = userDoc.data().name;
+                }
+            }
 
-        const stories = result.rows.map(row => ({
-            ...row,
-            _id: row.id,
-            author: { name: row.user_name }
-        }));
+            stories.push({
+                ...data,
+                _id: storyDoc.id,
+                id: storyDoc.id,
+                author: { name: authorName }
+            });
+        }
 
         return NextResponse.json(stories);
     } catch (error: any) {
@@ -40,16 +49,22 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { userId, title, content, image, tags } = body;
 
-        const result = await pool.query(
-            `INSERT INTO stories (user_id, title, content, image, tags)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING *`,
-            [userId, title, content, image, tags]
-        );
+        const storiesRef = collection(db, 'stories');
+        const newStory = {
+            user_id: userId,
+            title,
+            content,
+            image: image || null,
+            tags: tags || [],
+            created_at: new Date().toISOString()
+        };
 
-        return NextResponse.json({ ...result.rows[0], _id: result.rows[0].id }, { status: 201 });
+        const docRef = await addDoc(storiesRef, newStory);
+
+        return NextResponse.json({ ...newStory, _id: docRef.id, id: docRef.id }, { status: 201 });
     } catch (error: any) {
         console.error('Error creating story:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+

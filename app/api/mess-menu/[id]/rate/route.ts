@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { doc, updateDoc, increment, getDoc } from 'firebase/firestore';
 
 export async function POST(
     request: NextRequest,
@@ -11,29 +12,27 @@ export async function POST(
         const { mealType, rating } = body;
 
         const colSuffix = rating === 'up' ? 'up' : 'down';
-        const column = `${mealType.toLowerCase()}_${colSuffix}`;
+        const fieldName = `${mealType.toLowerCase()}_${colSuffix}`;
 
-        const result = await pool.query(
-            `UPDATE mess_menu 
-             SET ${column} = ${column} + 1 
-             WHERE id = $1 
-             RETURNING *`,
-            [id]
-        );
+        const docRef = doc(db, 'mess_menu', id);
+        
+        // Use updateDoc with increment for atomic update
+        await updateDoc(docRef, {
+            [fieldName]: increment(1)
+        });
 
-        if (result.rowCount === 0) {
-            return NextResponse.json({ error: 'Menu not found' }, { status: 404 });
-        }
+        const updatedSnap = await getDoc(docRef);
 
         return NextResponse.json({
             success: true,
-            menu: { ...result.rows[0], _id: result.rows[0].id }
+            menu: { ...updatedSnap.data(), _id: id, id: id }
         });
     } catch (error: any) {
         console.error('Error rating meal:', error);
         return NextResponse.json(
-            { error: 'Failed to rate meal' },
+            { error: 'Failed to rate meal', details: error.message },
             { status: 500 }
         );
     }
 }
+
