@@ -6,9 +6,10 @@ import { extractToken, verifyToken } from '@/lib/jwt';
 export async function PUT(request: NextRequest) {
     try {
         const token = extractToken(request);
-        const user = token ? verifyToken(token) : null;
+        const user = (token ? verifyToken(token) : null) as any;
         
         if (!user || user.role !== 'Student') {
+
             return NextResponse.json({ error: 'Unauthorized. Only students can update onboarding profile.' }, { status: 401 });
         }
 

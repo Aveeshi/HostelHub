@@ -1,5 +1,6 @@
 import React from 'react';
-import pool from '@/lib/db';
+import { db } from '@/lib/db';
+import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { Star, MapPin, Users, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { getPrimaryHostelImage } from '@/lib/hostelImages';
@@ -8,27 +9,26 @@ export default async function FeaturedHostels() {
     let hostels = [];
 
     try {
-        // Fetch top rated hostels
-        const res = await pool.query(`
-            SELECT id, block_name, location, type, rating, available_rooms, facilities, images 
-            FROM hostel_blocks 
-            -- WHERE approval_status = 'Approved' -- Add this column if it exists, otherwise remove
-            ORDER BY rating DESC 
-            LIMIT 3
-        `);
+        const blocksRef = collection(db, 'hostel_blocks');
+        const q = query(blocksRef, orderBy('rating', 'desc'), limit(3));
+        const snapshot = await getDocs(q);
 
-        hostels = res.rows.map(row => ({
-            _id: row.id,
-            blockName: row.block_name,
-            location: row.location,
-            type: row.type,
-            rating: parseFloat(row.rating),
-            availableRooms: row.available_rooms,
-            facilities: row.facilities || [],
-            images: row.images || []
-        }));
+        hostels = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                _id: doc.id,
+                blockName: data.block_name,
+                location: data.location,
+                type: data.type,
+                rating: parseFloat(data.rating) || 0,
+                availableRooms: data.available_rooms,
+                facilities: data.facilities || [],
+                images: data.images || []
+            };
+        });
 
     } catch (error) {
+
         console.error('Database connection failed in FeaturedHostels, using fallback data:', error);
         // Fallback mock data for build time or DB downtime
         hostels = [

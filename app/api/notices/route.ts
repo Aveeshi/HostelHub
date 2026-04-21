@@ -43,6 +43,7 @@ export const GET = withAuth(async (request: AuthenticatedRequest) => {
                 _id: noticeDoc.id,
                 id: noticeDoc.id,
                 ...data,
+                priority: data.priority,
                 createdAt: data.created_at,
                 expiresAt: data.expires_at,
                 hostelInfo: {
@@ -64,13 +65,14 @@ export const GET = withAuth(async (request: AuthenticatedRequest) => {
             return 3;
         };
 
-        notices.sort((a, b) => {
+        notices.sort((a: any, b: any) => {
             const scoreA = priorityScore(a.priority);
             const scoreB = priorityScore(b.priority);
             if (scoreA !== scoreB) return scoreA - scoreB;
-            // Secondary sort by date (desc) - though already sorted by Firestore
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            // Secondary sort by date (desc)
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
+
 
         return NextResponse.json(notices.slice(0, limitCount));
     } catch (error: any) {
