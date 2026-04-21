@@ -6,6 +6,25 @@ import { useTheme } from "next-themes"
 
 export function ModeToggle() {
     const { setTheme, resolvedTheme } = useTheme()
+    const [mounted, setMounted] = React.useState(false)
+
+    // Only render after mount so server/client HTML match
+    React.useEffect(() => {
+        setMounted(true)
+    }, [])
+
+    if (!mounted) {
+        // Render an invisible placeholder to keep layout stable
+        return (
+            <button
+                className="relative p-2 rounded-full hover:bg-accent/10 transition-colors"
+                aria-label="Toggle theme"
+                disabled
+            >
+                <Sun className="h-[1.2rem] w-[1.2rem] opacity-0" />
+            </button>
+        )
+    }
 
     return (
         <button
@@ -19,3 +38,4 @@ export function ModeToggle() {
         </button>
     )
 }
+
